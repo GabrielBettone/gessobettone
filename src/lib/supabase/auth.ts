@@ -72,6 +72,7 @@ const STORAGE_KEY = 'gesso-bettone.supabase.auth'
 const REFRESH_MARGIN_SECONDS = 60
 const listeners = new Set<AuthListener>()
 let refreshInFlight: Promise<SupabaseAuthSession | null> | null = null
+let volatileSession: SupabaseAuthSession | null = null
 
 function browserStorage(): Storage | null {
   if (typeof window === 'undefined') return null
@@ -104,28 +105,30 @@ function normalizeSession(
 
 function readStoredSession(): SupabaseAuthSession | null {
   const storage = browserStorage()
-  if (!storage) return null
+  if (!storage) return volatileSession
   try {
     const raw = storage.getItem(STORAGE_KEY)
-    if (!raw) return null
+    if (!raw) return volatileSession
     const parsed = JSON.parse(raw) as AuthPayload
-    return normalizeSession(parsed)
+    return normalizeSession(parsed) || volatileSession
   } catch {
-    return null
+    return volatileSession
   }
 }
 
 function writeStoredSession(session: SupabaseAuthSession): void {
+  volatileSession = session
   const storage = browserStorage()
   if (!storage) return
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(session))
   } catch {
-    // Storage may be blocked or full; callers still receive the in-memory result.
+    // Storage may be blocked or full; keep the session in memory for the current tab.
   }
 }
 
 function clearStoredSession(): void {
+  volatileSession = null
   const storage = browserStorage()
   if (!storage) return
   try {
@@ -216,16 +219,36 @@ export function onSupabaseAuthStateChange(listener: AuthListener): () => void {
   const storage = browserStorage()
   const handleStorage = (event: StorageEvent) => {
     if (!active || event.key !== STORAGE_KEY) return
+    if (!event.newValue) {
+      volatileSession = null
+    } else {
+      try {
+        volatileSession = normalizeSession(JSON.parse(event.newValue) as AuthPayload)
+      } catch {
+        volatileSession = null
+      }
+    }
     const session = readStoredSession()
     listener(session ? 'TOKEN_REFRESHED' : 'SIGNED_OUT', session)
   }
-  window.addEventListener?.('storage', handleStorage)
+  if (typeof window !== 'undefined') window.addEventListener('storage', handleStorage)
 
   return () => {
     active = false
     listeners.delete(listener)
-    window.removeEventListener?.('storage', handleStorage)
+    if (typeof window !== 'undefined') window.removeEventListener('storage', handleStorage)
   }
+}
+
+function payloadUser(payload: AuthPayload, session: SupabaseAuthSession | null): SupabaseAuthUser | null {
+  if (payload.user) return payload.user
+  if (typeof payload.id === 'string') {
+    return {
+      id: payload.id,
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+    }
+  }
+  return session?.user || null
 }
 
 export async function signInWithSupabasePassword(
@@ -241,7 +264,7 @@ export async function signInWithSupabasePassword(
     writeStoredSession(session)
     emit('SIGNED_IN', session)
   }
-  return { user: payload.user || session?.user || null, session }
+  return { user: payloadUser(payload, session), session }
 }
 
 export async function signUpWithSupabasePassword(
