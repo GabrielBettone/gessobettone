@@ -141,7 +141,7 @@ export async function supabaseAuthRequest<T>(
   init: RequestInit = {},
   accessToken?: string,
 ): Promise<T> {
-  const cleanPath = path.replace(/^\\/+/, '')
+  const cleanPath = path.replace(/^\/+/, '')
   return request<T>(`/auth/v1/${cleanPath}`, init, accessToken)
 }
 
