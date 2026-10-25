@@ -11,6 +11,7 @@ export interface SupabaseErrorPayload {
   message?: string
   error?: string
   error_description?: string
+  msg?: string
   hint?: string
   details?: string
   code?: string
@@ -23,7 +24,7 @@ export class SupabaseRequestError extends Error {
   readonly hint?: string
 
   constructor(status: number, payload: SupabaseErrorPayload, fallbackMessage: string) {
-    super(payload.message || payload.error_description || payload.error || fallbackMessage)
+    super(payload.message || payload.msg || payload.error_description || payload.error || fallbackMessage)
     this.name = 'SupabaseRequestError'
     this.status = status
     this.code = payload.code
@@ -133,6 +134,15 @@ async function request<T>(
   const text = await response.text()
   if (!text) return undefined as T
   return JSON.parse(text) as T
+}
+
+export async function supabaseAuthRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  accessToken?: string,
+): Promise<T> {
+  const cleanPath = path.replace(/^\\/+/, '')
+  return request<T>(`/auth/v1/${cleanPath}`, init, accessToken)
 }
 
 function buildQuery(options: SupabaseSelectOptions = {}): URLSearchParams {
